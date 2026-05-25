@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { fetchGraphicDesignJobs, scoreJob, extractDomain } from "@/lib/job-fetcher";
+import { fetchGraphicDesignJobs, scoreJob, shouldExcludeJob, extractDomain } from "@/lib/job-fetcher";
 import { lookupHiringManager, getCompanyProfile } from "@/lib/hiring-manager";
 
 export async function GET(req: Request) {
@@ -38,6 +38,9 @@ export async function GET(req: Request) {
     let skipped = 0;
 
     for (const raw of rawJobs) {
+      const { exclude } = shouldExcludeJob(raw, criteria);
+      if (exclude) { skipped++; continue; }
+
       const existing = await prisma.jobLead.findFirst({
         where: { jobUrl: raw.jobUrl, clientId: client.id },
       });

@@ -212,6 +212,44 @@ type Criteria = {
   titles?: string;
 } | null;
 
+// Extracts the minimum years of experience required from a job description.
+// Returns undefined if no experience requirement is found.
+function parseRequiredExpYears(text: string): number | undefined {
+  const t = text.toLowerCase();
+  // Patterns: "5+ years", "5 years", "minimum 5 years", "at least 5 years", "5-7 years"
+  const patterns = [
+    /(?:minimum|at least|requires?)\s+(\d+)\+?\s+years?/,
+    /(\d+)\+\s*years?\s+(?:of\s+)?(?:experience|exp)/,
+    /(\d+)\s*[-–]\s*\d+\s+years?\s+(?:of\s+)?(?:experience|exp)/,
+    /(\d+)\s+years?\s+(?:of\s+)?(?:experience|exp)/,
+    /experience[:\s]+(\d+)\+?\s+years?/,
+  ];
+  for (const pattern of patterns) {
+    const m = t.match(pattern);
+    if (m) return parseInt(m[1]);
+  }
+  return undefined;
+}
+
+export function shouldExcludeJob(job: RawJob, criteria?: Criteria): { exclude: boolean; reason?: string } {
+  const salaryMin = criteria?.salaryMin ?? 50000;
+  const expMax = criteria?.expMax ?? 3;
+
+  // Exclude if salary minimum is more than $20k above the user's desired salary
+  if (job.salaryMin && job.salaryMin > salaryMin + 20000) {
+    return { exclude: true, reason: `Salary too high: $${job.salaryMin.toLocaleString()} vs target $${salaryMin.toLocaleString()}` };
+  }
+
+  // Exclude if job requires more experience than the user's max (allow 1 year buffer)
+  const text = (job.experienceYears || "") + " " + (job.description || "");
+  const requiredExp = parseRequiredExpYears(text);
+  if (requiredExp !== undefined && requiredExp > expMax + 1) {
+    return { exclude: true, reason: `Requires ${requiredExp} yrs experience, user max is ${expMax}` };
+  }
+
+  return { exclude: false };
+}
+
 export function scoreJob(job: RawJob, criteria?: Criteria): { score: number; priority: string } {
   let score = 0;
   const salaryMin = criteria?.salaryMin ?? 50000;
@@ -235,13 +273,11 @@ export function scoreJob(job: RawJob, criteria?: Criteria): { score: number; pri
   else if (title.includes("visual designer") || title.includes("creative designer")) score += 15;
   else if (title.includes("designer")) score += 10;
 
-  const exp = (job.experienceYears || job.description || "").toLowerCase();
-  const expNums = exp.match(/(\d+)[\s-]+(\d+)?\s*year/);
-  if (expNums) {
-    const jobExpMin = parseInt(expNums[1]);
-    const jobExpMax = expNums[2] ? parseInt(expNums[2]) : jobExpMin + 2;
-    if (jobExpMin >= expMin && jobExpMax <= expMax + 2) score += 10;
-    else if (jobExpMin <= expMax) score += 5;
+  const text = (job.experienceYears || "") + " " + (job.description || "");
+  const requiredExp = parseRequiredExpYears(text);
+  if (requiredExp !== undefined) {
+    if (requiredExp >= expMin && requiredExp <= expMax) score += 10;
+    else if (requiredExp <= expMax + 1) score += 5;
   }
 
   const priority = score >= 60 ? "high" : score >= 35 ? "medium" : "low";
