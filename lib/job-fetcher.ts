@@ -240,6 +240,17 @@ export function shouldExcludeJob(job: RawJob, criteria?: Criteria): { exclude: b
   const salaryMin = criteria?.salaryMin ?? 50000;
   const expMax = criteria?.expMax ?? 3;
 
+  // Exclude jobs posted more than 30 days ago
+  if (job.postedAt) {
+    const posted = new Date(job.postedAt);
+    if (!isNaN(posted.getTime())) {
+      const daysOld = (Date.now() - posted.getTime()) / (1000 * 60 * 60 * 24);
+      if (daysOld > 30) {
+        return { exclude: true, reason: `Posted ${Math.floor(daysOld)} days ago (over 30-day limit)` };
+      }
+    }
+  }
+
   // Exclude if salary minimum is more than $20k above the user's desired salary
   if (job.salaryMin && job.salaryMin > salaryMin + 20000) {
     return { exclude: true, reason: `Salary too high: $${job.salaryMin.toLocaleString()} vs target $${salaryMin.toLocaleString()}` };
@@ -253,6 +264,17 @@ export function shouldExcludeJob(job: RawJob, criteria?: Criteria): { exclude: b
   }
 
   return { exclude: false };
+}
+
+// Strip markdown artifacts (##, **, •###, etc.) from scraped job descriptions
+export function cleanDescription(text?: string): string | undefined {
+  if (!text) return undefined;
+  return text
+    .replace(/#{1,6}\s*/g, "")       // headings
+    .replace(/\*{1,2}([^*]*)\*{1,2}/g, "$1")  // bold/italic
+    .replace(/•#{1,6}\s*/g, "• ")    // bullet+heading combos
+    .replace(/\n{3,}/g, "\n\n")      // excess blank lines
+    .trim();
 }
 
 export function scoreJob(job: RawJob, criteria?: Criteria): { score: number; priority: string } {

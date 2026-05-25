@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { fetchGraphicDesignJobs, scoreJob, shouldExcludeJob, extractDomain } from "@/lib/job-fetcher";
+import { fetchGraphicDesignJobs, scoreJob, shouldExcludeJob, extractDomain, cleanDescription } from "@/lib/job-fetcher";
 import { lookupHiringManager, getCompanyProfile } from "@/lib/hiring-manager";
 
 export async function GET(req: Request) {
@@ -66,7 +66,7 @@ export async function GET(req: Request) {
           experienceYears: raw.experienceYears,
           jobUrl: raw.jobUrl,
           source: raw.source,
-          description: raw.description,
+          description: cleanDescription(raw.description),
           postedAt: raw.postedAt,
           companyDomain: domain,
           companyWebsite: raw.companyWebsite,
