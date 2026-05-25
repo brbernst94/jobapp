@@ -69,7 +69,11 @@ async function fetchFromJSearch(query: string, location: string, salaryMin: numb
     );
     if (!res.ok) return [];
     const data = await res.json();
-    return (data.data || [])
+    // V2 response: { data: { jobs: [...] } }; V1 response: { data: [...] }
+    const jobs: Record<string, unknown>[] = Array.isArray(data.data)
+      ? data.data
+      : (data.data?.jobs || []);
+    return jobs
       .filter((job: Record<string, unknown>) => {
         const min = job.job_min_salary as number | undefined;
         return !min || min >= salaryMin * 0.8;
