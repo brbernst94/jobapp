@@ -15,50 +15,16 @@ export interface RawJob {
   companyWebsite?: string;
 }
 
-async function fetchFromAdzuna(query: string, location: string, salaryMin: number): Promise<RawJob[]> {
-  const appId = process.env.ADZUNA_APP_ID;
-  const appKey = process.env.ADZUNA_APP_KEY;
-  if (!appId || appKey === "your_adzuna_app_key" || !appKey) return [];
-  try {
-    const params = new URLSearchParams({
-      app_id: appId,
-      app_key: appKey,
-      results_per_page: "20",
-      what: query,
-      where: location,
-      salary_min: String(salaryMin),
-      distance: "25",
-      content_type: "application/json",
-    });
-    const url = `https://api.adzuna.com/v1/api/jobs/us/search/1?${params}`;
-    const res = await fetch(url, { next: { revalidate: 0 } });
-    if (!res.ok) return [];
-    const data = await res.json();
-    return (data.results || []).map((job: Record<string, unknown>) => ({
-      title: job.title as string,
-      company: (job.company as Record<string, string>)?.display_name || "Unknown",
-      location: (job.location as Record<string, string>)?.display_name || location,
-      isRemote: String(job.title).toLowerCase().includes("remote"),
-      salaryMin: job.salary_min as number | undefined,
-      salaryMax: job.salary_max as number | undefined,
-      jobUrl: job.redirect_url as string,
-      description: job.description as string | undefined,
-      postedAt: job.created as string | undefined,
-      source: "Adzuna",
-      companyWebsite: (job.company as Record<string, string>)?.href,
-    }));
-  } catch { return []; }
-}
+const ALLOWED_PUBLISHERS = ["linkedin", "ziprecruiter", "indeed", "builtin"];
 
-// JSearch via RapidAPI — aggregates LinkedIn, Indeed, Glassdoor, ZipRecruiter
-// Free tier: 200 req/month at rapidapi.com/letscrape-6bRBa3QguO5/api/jsearch
+// JSearch via RapidAPI — filters to LinkedIn, Indeed, ZipRecruiter only
 async function fetchFromJSearch(query: string, location: string, salaryMin: number): Promise<RawJob[]> {
   const apiKey = process.env.RAPIDAPI_KEY;
   if (!apiKey || apiKey === "your_rapidapi_key") return [];
   try {
     const q = encodeURIComponent(`${query} in ${location}`);
     const res = await fetch(
-      `https://jsearch.p.rapidapi.com/search?query=${q}&num_pages=2&date_posted=week`,
+      `https://jsearch.p.rapidapi.com/search?query=${q}&num_pages=2&date_posted=month`,
       {
         headers: {
           "X-RapidAPI-Key": apiKey,
@@ -69,12 +35,13 @@ async function fetchFromJSearch(query: string, location: string, salaryMin: numb
     );
     if (!res.ok) return [];
     const data = await res.json();
-    // V2 response: { data: { jobs: [...] } }; V1 response: { data: [...] }
     const jobs: Record<string, unknown>[] = Array.isArray(data.data)
       ? data.data
       : (data.data?.jobs || []);
     return jobs
       .filter((job: Record<string, unknown>) => {
+        const publisher = ((job.job_publisher as string) || "").toLowerCase();
+        if (!ALLOWED_PUBLISHERS.some(p => publisher.includes(p))) return false;
         const min = job.job_min_salary as number | undefined;
         return !min || min >= salaryMin * 0.8;
       })
@@ -108,92 +75,58 @@ async function fetchFromJSearch(query: string, location: string, salaryMin: numb
   } catch { return []; }
 }
 
-// The Muse — free public API, no key needed, real design job listings
-async function fetchFromTheMuse(keywords: string): Promise<RawJob[]> {
+// BuiltIn Colorado — tech/startup job board, design roles
+async function fetchFromBuiltIn(keywords: string): Promise<RawJob[]> {
   try {
-    const designCategories = ["Design & UX", "Creative & Design"];
-    const results: RawJob[] = [];
-    for (const cat of designCategories) {
-      const params = new URLSearchParams({ category: cat, page: "0", descending: "true" });
-      const res = await fetch(`https://www.themuse.com/api/public/jobs?${params}`, {
-        next: { revalidate: 0 },
-      });
-      if (!res.ok) continue;
-      const data = await res.json();
-      const kw = keywords.toLowerCase();
-      for (const job of (data.results || [])) {
-        const title: string = job.name || "";
-        if (!title.toLowerCase().includes("graphic") && !title.toLowerCase().includes("design") &&
-            !title.toLowerCase().includes("brand") && !title.toLowerCase().includes("visual") &&
-            !kw.split(" ").some((w: string) => title.toLowerCase().includes(w))) continue;
-        const loc = (job.locations?.[0]?.name as string) || "Remote";
-        results.push({
-          title,
-          company: (job.company?.name as string) || "Unknown",
-          location: loc,
-          isRemote: loc.toLowerCase().includes("remote") || loc.toLowerCase().includes("flexible"),
-          jobUrl: job.refs?.landing_page as string || "",
-          description: job.contents ? (job.contents as string).replace(/<[^>]*>/g, "").slice(0, 500) : undefined,
-          postedAt: job.publication_date as string | undefined,
-          source: "The Muse",
-        });
-      }
-    }
-    return results.filter(j => j.jobUrl);
-  } catch { return []; }
-}
-
-// Remotive — free API for remote jobs, no key needed
-async function fetchFromRemotive(keywords: string): Promise<RawJob[]> {
-  try {
-    const params = new URLSearchParams({ category: "Design", limit: "20" });
-    const res = await fetch(`https://remotive.com/api/remote-jobs?${params}`, {
+    const params = new URLSearchParams({
+      search: keywords,
+      "roles[]": "Design",
+      location: "Colorado",
+    });
+    const res = await fetch(`https://api.builtin.com/jobs?${params}`, {
+      headers: { "Accept": "application/json" },
       next: { revalidate: 0 },
     });
     if (!res.ok) return [];
     const data = await res.json();
+    const items: Record<string, unknown>[] = data.jobs || data.data || data || [];
+    if (!Array.isArray(items)) return [];
     const kw = keywords.toLowerCase().split(/[\s,]+/);
-    return (data.jobs || [])
-      .filter((job: Record<string, unknown>) => {
-        const title = (job.title as string).toLowerCase();
+    return items
+      .filter((job) => {
+        const title = ((job.title || job.name || "") as string).toLowerCase();
         return kw.some(w => title.includes(w)) ||
-          title.includes("graphic") || title.includes("brand") || title.includes("visual");
+          title.includes("graphic") || title.includes("brand") || title.includes("visual") || title.includes("design");
       })
-      .slice(0, 10)
       .map((job: Record<string, unknown>) => ({
-        title: job.title as string,
-        company: job.company_name as string,
-        location: (job.candidate_required_location as string) || "Remote",
-        isRemote: true,
-        salaryText: (job.salary as string) || undefined,
-        jobUrl: job.url as string,
+        title: ((job.title || job.name) as string),
+        company: ((job as Record<string, Record<string, unknown>>).company?.name as string || job.companyName as string || "Unknown"),
+        location: (job.locationName || job.location || "Colorado") as string,
+        isRemote: !!(job.isRemote || job.remote),
+        jobUrl: (job.url || job.applyUrl || `https://www.builtincolorado.com/job/${job.slug || job.id}`) as string,
         description: job.description ? (job.description as string).replace(/<[^>]*>/g, "").slice(0, 500) : undefined,
-        postedAt: job.publication_date as string | undefined,
-        source: "Remotive",
+        postedAt: (job.postedDate || job.createdAt) as string | undefined,
+        source: "BuiltIn",
       }));
   } catch { return []; }
 }
-
 
 export async function fetchGraphicDesignJobs(
   titles: string[],
   locations: string[],
   salaryMin: number
 ): Promise<RawJob[]> {
-  const results: RawJob[] = [];
   const primaryTitle = titles[0] || "graphic designer";
   const primaryLocation = locations[0] || "Denver, CO";
   const keywordQuery = titles.join(" ");
 
-  const [adzunaDenver, adzunaRemote, jsearch, muse, remotive] = await Promise.all([
-    fetchFromAdzuna(primaryTitle, primaryLocation, salaryMin),
-    fetchFromAdzuna(`${primaryTitle} remote`, "", salaryMin),
+  const [jsearch, jsearchRemote, builtin] = await Promise.all([
     fetchFromJSearch(keywordQuery, primaryLocation, salaryMin),
-    fetchFromTheMuse(keywordQuery),
-    fetchFromRemotive(keywordQuery),
+    fetchFromJSearch(`${keywordQuery} remote`, "United States", salaryMin),
+    fetchFromBuiltIn(keywordQuery),
   ]);
 
-  results.push(...adzunaDenver, ...adzunaRemote, ...jsearch, ...muse, ...remotive);
+  const results = [...jsearch, ...jsearchRemote, ...builtin];
 
   const seen = new Set<string>();
   return results.filter((job) => {
@@ -236,16 +169,14 @@ function parseRequiredExpYears(text: string): number | undefined {
   return undefined;
 }
 
-const BLOCKED_SOURCES = ["learn4good", "jooble"];
-
 export function shouldExcludeJob(job: RawJob, criteria?: Criteria): { exclude: boolean; reason?: string } {
   const salaryMin = criteria?.salaryMin ?? 50000;
   const expMax = criteria?.expMax ?? 3;
 
-  // Exclude known low-quality or scammy job boards
+  // Only keep jobs from approved sources
   const sourceLower = job.source.toLowerCase();
-  if (BLOCKED_SOURCES.some(s => sourceLower.includes(s))) {
-    return { exclude: true, reason: `Blocked source: ${job.source}` };
+  if (!ALLOWED_PUBLISHERS.some(p => sourceLower.includes(p))) {
+    return { exclude: true, reason: `Source not in allowlist: ${job.source}` };
   }
 
   // Exclude jobs posted more than 30 days ago
