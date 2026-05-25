@@ -25,6 +25,7 @@ export async function GET(req: Request) {
   }
 
   const results: Record<string, { added: number; skipped: number }> = {};
+  const sourcesSet = new Set<string>();
 
   for (const client of clients) {
     const criteria = client.criteria;
@@ -75,10 +76,11 @@ export async function GET(req: Request) {
           status: "new",
         },
       });
+      sourcesSet.add(raw.source);
       added++;
     }
     results[client.id] = { added, skipped };
   }
 
-  return NextResponse.json({ success: true, results, fetchedAt: new Date().toISOString() });
+  return NextResponse.json({ success: true, results, sources: Array.from(sourcesSet), fetchedAt: new Date().toISOString() });
 }

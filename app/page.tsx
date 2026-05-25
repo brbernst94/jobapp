@@ -547,10 +547,16 @@ function Dashboard({ client, onBack }: { client: Client; onBack: () => void }) {
 
   async function clearAndRefetch() {
     setFetching(true);
-    await fetch(`/api/jobs/clear?clientId=${client.id}`, { method: "DELETE" });
-    await fetch(`/api/cron/fetch-jobs?clientId=${client.id}`);
+    const delRes = await fetch(`/api/jobs/clear?clientId=${client.id}`, { method: "DELETE" });
+    const delData = await delRes.json();
+    const fetchRes = await fetch(`/api/cron/fetch-jobs?clientId=${client.id}`);
+    const fetchData = await fetchRes.json();
     await loadData();
     setFetching(false);
+    const added = fetchData?.results?.[client.id]?.added ?? 0;
+    const sources = fetchData?.sources ?? [];
+    const sourceStr = sources.length ? ` (${sources.join(", ")})` : "";
+    alert(`Deleted ${delData.deleted ?? 0} old jobs.\nAdded ${added} new jobs${sourceStr}.${added === 0 ? "\n\nNo real listings found — check that RAPIDAPI_KEY is set correctly in Railway." : ""}`);
   }
 
   async function markApplied(jobId: string) {
