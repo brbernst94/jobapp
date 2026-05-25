@@ -47,7 +47,7 @@ export async function GET(req: Request) {
       const domain = raw.companyDomain || extractDomain(raw.companyWebsite);
       const [managerInfo, companyProfile] = await Promise.all([
         lookupHiringManager(raw.company, domain),
-        Promise.resolve(getCompanyProfile(domain, raw.company)),
+        getCompanyProfile(domain, raw.company),
       ]);
 
       await prisma.jobLead.create({
