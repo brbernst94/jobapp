@@ -11,7 +11,6 @@ export async function DELETE(req: Request) {
     where: {
       clientId,
       status: "new",
-      application: null, // never delete applied jobs
     },
   });
 
