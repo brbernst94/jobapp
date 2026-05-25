@@ -545,6 +545,14 @@ function Dashboard({ client, onBack }: { client: Client; onBack: () => void }) {
     setFetching(false);
   }
 
+  async function clearAndRefetch() {
+    setFetching(true);
+    await fetch(`/api/jobs/clear?clientId=${client.id}`, { method: "DELETE" });
+    await fetch(`/api/cron/fetch-jobs?clientId=${client.id}`);
+    await loadData();
+    setFetching(false);
+  }
+
   async function markApplied(jobId: string) {
     await fetch("/api/applications", {
       method: "POST",
@@ -635,10 +643,13 @@ function Dashboard({ client, onBack }: { client: Client; onBack: () => void }) {
           ))}
         </nav>
 
-        <div className="p-3 border-t border-gray-100">
+        <div className="p-3 border-t border-gray-100 space-y-2">
           <Button onClick={fetchJobs} variant="secondary" size="sm" className="w-full" disabled={fetching}>
             <RefreshCw className={`w-3.5 h-3.5 ${fetching ? "animate-spin" : ""}`} />
             {fetching ? "Fetching..." : "Fetch Today's Jobs"}
+          </Button>
+          <Button onClick={clearAndRefetch} variant="ghost" size="sm" className="w-full text-xs text-gray-400 hover:text-red-600" disabled={fetching}>
+            Clear old & re-fetch
           </Button>
         </div>
       </div>
