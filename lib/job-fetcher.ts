@@ -213,15 +213,20 @@ type Criteria = {
 } | null;
 
 // Extracts the minimum years of experience required from a job description.
-// Returns undefined if no experience requirement is found.
 function parseRequiredExpYears(text: string): number | undefined {
   const t = text.toLowerCase();
-  // Patterns: "5+ years", "5 years", "minimum 5 years", "at least 5 years", "5-7 years"
   const patterns = [
-    /(?:minimum|at least|requires?)\s+(\d+)\+?\s+years?/,
-    /(\d+)\+\s*years?\s+(?:of\s+)?(?:experience|exp)/,
-    /(\d+)\s*[-–]\s*\d+\s+years?\s+(?:of\s+)?(?:experience|exp)/,
-    /(\d+)\s+years?\s+(?:of\s+)?(?:experience|exp)/,
+    // "over/more than/minimum/at least/requires 5 years"
+    /(?:over|more than|minimum|at least|requires?)\s+(\d+)\+?\s+years?/,
+    // "5+ years of experience" or "5+ years of design experience"
+    /(\d+)\+\s*years?\s+of\s+(?:\w+\s+){0,3}experience/,
+    // "5-7 years of (any words) experience"
+    /(\d+)\s*[-–]\s*\d+\s+years?\s+of\s+(?:\w+\s+){0,3}experience/,
+    // "5 years of (any words) experience"
+    /(\d+)\s+years?\s+of\s+(?:\w+\s+){0,3}experience/,
+    // "5+ years experience" (no "of")
+    /(\d+)\+\s*years?\s+experience/,
+    // "experience: 5+ years"
     /experience[:\s]+(\d+)\+?\s+years?/,
   ];
   for (const pattern of patterns) {
