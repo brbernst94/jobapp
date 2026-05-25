@@ -236,9 +236,17 @@ function parseRequiredExpYears(text: string): number | undefined {
   return undefined;
 }
 
+const BLOCKED_SOURCES = ["learn4good", "jooble"];
+
 export function shouldExcludeJob(job: RawJob, criteria?: Criteria): { exclude: boolean; reason?: string } {
   const salaryMin = criteria?.salaryMin ?? 50000;
   const expMax = criteria?.expMax ?? 3;
+
+  // Exclude known low-quality or scammy job boards
+  const sourceLower = job.source.toLowerCase();
+  if (BLOCKED_SOURCES.some(s => sourceLower.includes(s))) {
+    return { exclude: true, reason: `Blocked source: ${job.source}` };
+  }
 
   // Exclude jobs posted more than 30 days ago
   if (job.postedAt) {
