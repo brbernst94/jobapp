@@ -50,29 +50,96 @@ async function fetchFromAdzuna(query: string, location: string, salaryMin: numbe
   } catch { return []; }
 }
 
-async function fetchFromJooble(keywords: string, location: string, salaryMin: number): Promise<RawJob[]> {
-  const apiKey = process.env.JOOBLE_API_KEY;
-  if (!apiKey || apiKey === "your_jooble_api_key") return [];
+// JSearch via RapidAPI — aggregates LinkedIn, Indeed, Glassdoor, ZipRecruiter
+// Free tier: 200 req/month at rapidapi.com/letscrape-6bRBa3QguO5/api/jsearch
+async function fetchFromJSearch(query: string, location: string, salaryMin: number): Promise<RawJob[]> {
+  const apiKey = process.env.RAPIDAPI_KEY;
+  if (!apiKey || apiKey === "your_rapidapi_key") return [];
   try {
-    const res = await fetch(`https://jooble.org/api/${apiKey}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ keywords, location, salary: salaryMin }),
+    const q = encodeURIComponent(`${query} in ${location}`);
+    const res = await fetch(
+      `https://jsearch.p.rapidapi.com/search?query=${q}&num_pages=2&date_posted=week`,
+      {
+        headers: {
+          "X-RapidAPI-Key": apiKey,
+          "X-RapidAPI-Host": "jsearch.p.rapidapi.com",
+        },
+        next: { revalidate: 0 },
+      }
+    );
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data.data || [])
+      .filter((job: Record<string, unknown>) => {
+        const min = job.job_min_salary as number | undefined;
+        return !min || min >= salaryMin * 0.8;
+      })
+      .map((job: Record<string, unknown>) => {
+        const city = job.job_city as string | undefined;
+        const state = job.job_state as string | undefined;
+        const locationStr = city && state ? `${city}, ${state}` : (job.job_country as string) || location;
+        const minSal = job.job_min_salary as number | undefined;
+        const maxSal = job.job_max_salary as number | undefined;
+        const website = job.employer_website as string | undefined;
+        let domain: string | undefined;
+        if (website) {
+          try { domain = new URL(website.startsWith("http") ? website : `https://${website}`).hostname.replace(/^www\./, ""); } catch { /* ignore */ }
+        }
+        return {
+          title: job.job_title as string,
+          company: job.employer_name as string,
+          location: locationStr,
+          isRemote: (job.job_is_remote as boolean) || false,
+          salaryMin: minSal,
+          salaryMax: maxSal,
+          salaryText: minSal && maxSal ? `$${(minSal / 1000).toFixed(0)}k – $${(maxSal / 1000).toFixed(0)}k/yr` : undefined,
+          jobUrl: (job.job_apply_link || job.job_google_link) as string,
+          description: job.job_description ? (job.job_description as string).slice(0, 600) : undefined,
+          postedAt: job.job_posted_at_datetime_utc as string | undefined,
+          source: (job.job_publisher as string) || "JSearch",
+          companyWebsite: website,
+          companyDomain: domain,
+        };
+      });
+  } catch { return []; }
+}
+
+// Indeed RSS feed — free, no API key required
+async function fetchFromIndeedRSS(keywords: string, location: string): Promise<RawJob[]> {
+  try {
+    const params = new URLSearchParams({ q: keywords, l: location, radius: "25", sort: "date" });
+    const res = await fetch(`https://www.indeed.com/rss?${params}`, {
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; JobApp/1.0)" },
       next: { revalidate: 0 },
     });
     if (!res.ok) return [];
-    const data = await res.json();
-    return (data.jobs || []).map((job: Record<string, unknown>) => ({
-      title: job.title as string,
-      company: job.company as string,
-      location: job.location as string,
-      isRemote: String(job.location).toLowerCase().includes("remote"),
-      salaryText: job.salary as string | undefined,
-      jobUrl: job.link as string,
-      description: job.snippet as string | undefined,
-      postedAt: job.updated as string | undefined,
-      source: "Jooble",
-    }));
+    const xml = await res.text();
+    const items = xml.match(/<item>([\s\S]*?)<\/item>/g) || [];
+    return items.slice(0, 15).flatMap((item) => {
+      const getTag = (tag: string) =>
+        item.match(new RegExp(`<${tag}><!\\[CDATA\\[([\\s\\S]*?)\\]\\]><\\/${tag}>`))?.[1] ||
+        item.match(new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`))?.[1] || "";
+      const rawTitle = getTag("title");
+      const link = getTag("link") || item.match(/<link\s*\/?>(.*?)<\/link>/)?.[1] || "";
+      if (!rawTitle || !link) return [];
+      // Indeed title format: "Job Title - Company - Location"
+      const parts = rawTitle.split(" - ");
+      const title = parts[0]?.trim() || rawTitle;
+      const company = parts[1]?.trim() || "Unknown";
+      const loc = parts[2]?.trim() || location;
+      const desc = getTag("description").replace(/<[^>]*>/g, "").trim().slice(0, 500);
+      const pubDate = getTag("pubDate");
+      return [{
+        title,
+        company,
+        location: loc,
+        isRemote: loc.toLowerCase().includes("remote"),
+        jobUrl: link,
+        description: desc || undefined,
+        postedAt: pubDate || undefined,
+        source: "Indeed",
+      }];
+    });
   } catch { return []; }
 }
 
@@ -223,13 +290,14 @@ export async function fetchGraphicDesignJobs(
   const primaryTitle = titles[0] || "graphic designer";
   const primaryLocation = locations[0] || "Denver, CO";
 
-  const [adzunaDenver, adzunaRemote, jooble] = await Promise.all([
+  const [adzunaDenver, adzunaRemote, jsearch, indeedRSS] = await Promise.all([
     fetchFromAdzuna(primaryTitle, primaryLocation, salaryMin),
     fetchFromAdzuna(`${primaryTitle} remote`, "", salaryMin),
-    fetchFromJooble(titles.join(" OR "), primaryLocation, salaryMin),
+    fetchFromJSearch(titles.join(" "), primaryLocation, salaryMin),
+    fetchFromIndeedRSS(primaryTitle, primaryLocation),
   ]);
 
-  results.push(...adzunaDenver, ...adzunaRemote, ...jooble);
+  results.push(...adzunaDenver, ...adzunaRemote, ...jsearch, ...indeedRSS);
 
   if (results.length === 0) {
     results.push(...getMockJobs(titles, locations, salaryMin));
