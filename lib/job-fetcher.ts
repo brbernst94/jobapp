@@ -104,125 +104,72 @@ async function fetchFromJSearch(query: string, location: string, salaryMin: numb
   } catch { return []; }
 }
 
-// Indeed RSS feed — free, no API key required
-async function fetchFromIndeedRSS(keywords: string, location: string): Promise<RawJob[]> {
+// The Muse — free public API, no key needed, real design job listings
+async function fetchFromTheMuse(keywords: string): Promise<RawJob[]> {
   try {
-    const params = new URLSearchParams({ q: keywords, l: location, radius: "25", sort: "date" });
-    const res = await fetch(`https://www.indeed.com/rss?${params}`, {
-      headers: { "User-Agent": "Mozilla/5.0 (compatible; JobApp/1.0)" },
-      next: { revalidate: 0 },
-    });
-    if (!res.ok) return [];
-    const xml = await res.text();
-    const items = xml.match(/<item>([\s\S]*?)<\/item>/g) || [];
-    return items.slice(0, 15).flatMap((item) => {
-      const getTag = (tag: string) =>
-        item.match(new RegExp(`<${tag}><!\\[CDATA\\[([\\s\\S]*?)\\]\\]><\\/${tag}>`))?.[1] ||
-        item.match(new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`))?.[1] || "";
-      const rawTitle = getTag("title");
-      const link = getTag("link") || item.match(/<link\s*\/?>(.*?)<\/link>/)?.[1] || "";
-      if (!rawTitle || !link) return [];
-      // Indeed title format: "Job Title - Company - Location"
-      const parts = rawTitle.split(" - ");
-      const title = parts[0]?.trim() || rawTitle;
-      const company = parts[1]?.trim() || "Unknown";
-      const loc = parts[2]?.trim() || location;
-      const desc = getTag("description").replace(/<[^>]*>/g, "").trim().slice(0, 500);
-      const pubDate = getTag("pubDate");
-      return [{
-        title,
-        company,
-        location: loc,
-        isRemote: loc.toLowerCase().includes("remote"),
-        jobUrl: link,
-        description: desc || undefined,
-        postedAt: pubDate || undefined,
-        source: "Indeed",
-      }];
-    });
+    const designCategories = ["Design & UX", "Creative & Design"];
+    const results: RawJob[] = [];
+    for (const cat of designCategories) {
+      const params = new URLSearchParams({ category: cat, page: "0", descending: "true" });
+      const res = await fetch(`https://www.themuse.com/api/public/jobs?${params}`, {
+        next: { revalidate: 0 },
+      });
+      if (!res.ok) continue;
+      const data = await res.json();
+      const kw = keywords.toLowerCase();
+      for (const job of (data.results || [])) {
+        const title: string = job.name || "";
+        if (!title.toLowerCase().includes("graphic") && !title.toLowerCase().includes("design") &&
+            !title.toLowerCase().includes("brand") && !title.toLowerCase().includes("visual") &&
+            !kw.split(" ").some((w: string) => title.toLowerCase().includes(w))) continue;
+        const loc = (job.locations?.[0]?.name as string) || "Remote";
+        results.push({
+          title,
+          company: (job.company?.name as string) || "Unknown",
+          location: loc,
+          isRemote: loc.toLowerCase().includes("remote") || loc.toLowerCase().includes("flexible"),
+          jobUrl: job.refs?.landing_page as string || "",
+          description: job.contents ? (job.contents as string).replace(/<[^>]*>/g, "").slice(0, 500) : undefined,
+          postedAt: job.publication_date as string | undefined,
+          source: "The Muse",
+        });
+      }
+    }
+    return results.filter(j => j.jobUrl);
   } catch { return []; }
 }
 
-// Build real working search URLs based on the user's actual criteria
-function indeedSearchUrl(title: string, location: string) {
-  return `https://www.indeed.com/jobs?q=${encodeURIComponent(title)}&l=${encodeURIComponent(location)}&sort=date`;
-}
-function linkedinSearchUrl(title: string, location: string) {
-  return `https://www.linkedin.com/jobs/search/?keywords=${encodeURIComponent(title)}&location=${encodeURIComponent(location)}&f_TPR=r604800`;
-}
-function builtinSearchUrl(title: string) {
-  return `https://www.builtincolorado.com/jobs?search=${encodeURIComponent(title)}`;
+// Remotive — free API for remote jobs, no key needed
+async function fetchFromRemotive(keywords: string): Promise<RawJob[]> {
+  try {
+    const params = new URLSearchParams({ category: "Design", limit: "20" });
+    const res = await fetch(`https://remotive.com/api/remote-jobs?${params}`, {
+      next: { revalidate: 0 },
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    const kw = keywords.toLowerCase().split(/[\s,]+/);
+    return (data.jobs || [])
+      .filter((job: Record<string, unknown>) => {
+        const title = (job.title as string).toLowerCase();
+        return kw.some(w => title.includes(w)) ||
+          title.includes("graphic") || title.includes("brand") || title.includes("visual");
+      })
+      .slice(0, 10)
+      .map((job: Record<string, unknown>) => ({
+        title: job.title as string,
+        company: job.company_name as string,
+        location: (job.candidate_required_location as string) || "Remote",
+        isRemote: true,
+        salaryText: (job.salary as string) || undefined,
+        jobUrl: job.url as string,
+        description: job.description ? (job.description as string).replace(/<[^>]*>/g, "").slice(0, 500) : undefined,
+        postedAt: job.publication_date as string | undefined,
+        source: "Remotive",
+      }));
+  } catch { return []; }
 }
 
-function getMockJobs(titles: string[], locations: string[], salaryMin: number): RawJob[] {
-  const primaryTitle = titles[0] || "Graphic Designer";
-  const primaryLocation = locations[0] || "Denver, CO";
-
-  const allMocks: RawJob[] = [
-    {
-      title: primaryTitle,
-      company: "Search Indeed →",
-      location: primaryLocation,
-      isRemote: false,
-      salaryMin: salaryMin,
-      salaryText: `$${(salaryMin / 1000).toFixed(0)}k+ (add RAPIDAPI_KEY for real listings)`,
-      jobUrl: indeedSearchUrl(primaryTitle, primaryLocation),
-      description: `Click "View Job" to search Indeed for "${primaryTitle}" roles in ${primaryLocation}. Add your RAPIDAPI_KEY in Railway to get real job listings pulled automatically.`,
-      postedAt: new Date().toISOString(),
-      source: "Indeed (Live Search)",
-    },
-    {
-      title: primaryTitle,
-      company: "Search LinkedIn →",
-      location: primaryLocation,
-      isRemote: false,
-      salaryMin: salaryMin,
-      salaryText: `$${(salaryMin / 1000).toFixed(0)}k+`,
-      jobUrl: linkedinSearchUrl(primaryTitle, primaryLocation),
-      description: `Click "View Job" to search LinkedIn for "${primaryTitle}" roles in ${primaryLocation} posted in the last week.`,
-      postedAt: new Date().toISOString(),
-      source: "LinkedIn (Live Search)",
-    },
-    {
-      title: primaryTitle,
-      company: "Search BuiltIn Colorado →",
-      location: "Colorado",
-      isRemote: false,
-      salaryMin: salaryMin,
-      salaryText: `$${(salaryMin / 1000).toFixed(0)}k+`,
-      jobUrl: builtinSearchUrl(primaryTitle),
-      description: `Click "View Job" to search BuiltIn Colorado for "${primaryTitle}" roles at tech and startup companies in Colorado.`,
-      postedAt: new Date().toISOString(),
-      source: "BuiltIn Colorado (Live Search)",
-    },
-    {
-      title: `${primaryTitle} (Remote)`,
-      company: "Search Indeed Remote →",
-      location: "Remote (US)",
-      isRemote: true,
-      salaryMin: salaryMin,
-      salaryText: `$${(salaryMin / 1000).toFixed(0)}k+`,
-      jobUrl: indeedSearchUrl(`${primaryTitle} remote`, ""),
-      description: `Click "View Job" to search Indeed for remote "${primaryTitle}" roles across the US.`,
-      postedAt: new Date().toISOString(),
-      source: "Indeed (Live Search)",
-    },
-    {
-      title: `${primaryTitle} (Remote)`,
-      company: "Search LinkedIn Remote →",
-      location: "Remote (US)",
-      isRemote: true,
-      salaryMin: salaryMin,
-      salaryText: `$${(salaryMin / 1000).toFixed(0)}k+`,
-      jobUrl: linkedinSearchUrl(`${primaryTitle} remote`, "United States"),
-      description: `Click "View Job" to search LinkedIn for remote "${primaryTitle}" roles posted in the last week.`,
-      postedAt: new Date().toISOString(),
-      source: "LinkedIn (Live Search)",
-    },
-  ];
-
-  return allMocks;
-}
 
 export async function fetchGraphicDesignJobs(
   titles: string[],
@@ -232,23 +179,21 @@ export async function fetchGraphicDesignJobs(
   const results: RawJob[] = [];
   const primaryTitle = titles[0] || "graphic designer";
   const primaryLocation = locations[0] || "Denver, CO";
+  const keywordQuery = titles.join(" ");
 
-  const [adzunaDenver, adzunaRemote, jsearch, indeedRSS] = await Promise.all([
+  const [adzunaDenver, adzunaRemote, jsearch, muse, remotive] = await Promise.all([
     fetchFromAdzuna(primaryTitle, primaryLocation, salaryMin),
     fetchFromAdzuna(`${primaryTitle} remote`, "", salaryMin),
-    fetchFromJSearch(titles.join(" "), primaryLocation, salaryMin),
-    fetchFromIndeedRSS(primaryTitle, primaryLocation),
+    fetchFromJSearch(keywordQuery, primaryLocation, salaryMin),
+    fetchFromTheMuse(keywordQuery),
+    fetchFromRemotive(keywordQuery),
   ]);
 
-  results.push(...adzunaDenver, ...adzunaRemote, ...jsearch, ...indeedRSS);
-
-  if (results.length === 0) {
-    results.push(...getMockJobs(titles, locations, salaryMin));
-  }
+  results.push(...adzunaDenver, ...adzunaRemote, ...jsearch, ...muse, ...remotive);
 
   const seen = new Set<string>();
   return results.filter((job) => {
-    if (seen.has(job.jobUrl)) return false;
+    if (!job.jobUrl || seen.has(job.jobUrl)) return false;
     seen.add(job.jobUrl);
     return true;
   });
