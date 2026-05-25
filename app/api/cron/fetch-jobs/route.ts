@@ -7,9 +7,11 @@ export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const clientId = searchParams.get("clientId");
 
+  // Only enforce CRON_SECRET for the automated batch call (no clientId).
+  // User-triggered fetches from the UI always include a clientId and are allowed freely.
   const authHeader = req.headers.get("authorization");
   const cronSecret = process.env.CRON_SECRET;
-  if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+  if (!clientId && cronSecret && authHeader !== `Bearer ${cronSecret}`) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
