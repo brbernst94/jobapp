@@ -3,7 +3,7 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -15,6 +15,7 @@ model Client {
   location      String?
   portfolioUrl  String?
   linkedinUrl   String?
+  bio           String?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -22,12 +23,31 @@ model Client {
   coverLetter   CoverLetter?
   applications  Application[]
   jobLeads      JobLead[]
+  criteria      JobCriteria?
+}
+
+model JobCriteria {
+  id         String  @id @default(cuid())
+  clientId   String  @unique
+  client     Client  @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  salaryMin  Int     @default(50000)
+  salaryMax  Int?
+  locations  String  @default("Denver, CO")
+  remoteOk   Boolean @default(true)
+  expMin     Int     @default(1)
+  expMax     Int     @default(3)
+  titles     String  @default("Graphic Designer,Brand Designer,Visual Designer")
+  industry   String?
+
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 }
 
 model Resume {
   id        String   @id @default(cuid())
   clientId  String   @unique
-  client    Client   @relation(fields: [clientId], references: [id])
+  client    Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
   content   String
   fileName  String?
   updatedAt DateTime @updatedAt
@@ -37,96 +57,83 @@ model Resume {
 model CoverLetter {
   id        String   @id @default(cuid())
   clientId  String   @unique
-  client    Client   @relation(fields: [clientId], references: [id])
+  client    Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
   content   String
   updatedAt DateTime @updatedAt
   createdAt DateTime @default(now())
 }
 
 model JobLead {
-  id              String   @id @default(cuid())
-  clientId        String
-  client          Client   @relation(fields: [clientId], references: [id])
-
-  title           String
-  company         String
-  companyDomain   String?
-  companyWebsite  String?
-  location        String
-  isRemote        Boolean  @default(false)
-  salaryMin       Int?
-  salaryMax       Int?
-  salaryText      String?
-  experienceYears String?
-  jobUrl          String
-  source          String
-  description     String?
-  postedAt        String?
-  fetchedAt       DateTime @default(now())
-
-  hiringManager          String?
-  hiringManagerTitle     String?
-  hiringManagerLinkedIn  String?
-
-  companyNotes      String?
-  coverLetterFocus  String?
-
-  priority  String  @default("medium")
-  status    String  @default("new")
-
-  application Application?
-
-  createdAt DateTime @default(now())
+  id                    String   @id @default(cuid())
+  clientId              String
+  client                Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  title                 String
+  company               String
+  companyDomain         String?
+  companyWebsite        String?
+  location              String
+  isRemote              Boolean  @default(false)
+  salaryMin             Int?
+  salaryMax             Int?
+  salaryText            String?
+  experienceYears       String?
+  jobUrl                String
+  source                String
+  description           String?
+  postedAt              String?
+  fetchedAt             DateTime @default(now())
+  hiringManager         String?
+  hiringManagerTitle    String?
+  hiringManagerLinkedIn String?
+  companyNotes          String?
+  coverLetterFocus      String?
+  priority              String   @default("medium")
+  status                String   @default("new")
+  application           Application?
+  createdAt             DateTime @default(now())
 }
 
 model Application {
-  id           String   @id @default(cuid())
-  clientId     String
-  client       Client   @relation(fields: [clientId], references: [id])
-  jobLeadId    String   @unique
-  jobLead      JobLead  @relation(fields: [jobLeadId], references: [id])
-
-  appliedAt         DateTime?
-  status            String    @default("saved")
-  notes             String?
-  emailThreadId     String?
-  lastEmailAt       DateTime?
-  lastEmailSubject  String?
-
-  followUps   FollowUp[]
-  emailEvents EmailEvent[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id               String    @id @default(cuid())
+  clientId         String
+  client           Client    @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  jobLeadId        String    @unique
+  jobLead          JobLead   @relation(fields: [jobLeadId], references: [id], onDelete: Cascade)
+  appliedAt        DateTime?
+  status           String    @default("saved")
+  notes            String?
+  emailThreadId    String?
+  lastEmailAt      DateTime?
+  lastEmailSubject String?
+  followUps        FollowUp[]
+  emailEvents      EmailEvent[]
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 }
 
 model FollowUp {
   id            String      @id @default(cuid())
   applicationId String
-  application   Application @relation(fields: [applicationId], references: [id])
-
-  scheduledFor DateTime
-  message      String
-  type         String   @default("email")
-  sent         Boolean  @default(false)
-  sentAt       DateTime?
-
-  createdAt DateTime @default(now())
+  application   Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  scheduledFor  DateTime
+  message       String
+  type          String      @default("email")
+  sent          Boolean     @default(false)
+  sentAt        DateTime?
+  createdAt     DateTime    @default(now())
 }
 
 model EmailEvent {
   id            String      @id @default(cuid())
   applicationId String
-  application   Application @relation(fields: [applicationId], references: [id])
-
-  threadId     String?
-  messageId    String?
-  subject      String
-  from         String
-  fromDomain   String?
-  receivedAt   DateTime
-  snippet      String?
-  statusChange String?
-
-  createdAt DateTime @default(now())
+  application   Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  threadId      String?
+  messageId     String?
+  subject       String
+  from          String
+  fromDomain    String?
+  receivedAt    DateTime
+  snippet       String?
+  statusChange  String?
+  createdAt     DateTime    @default(now())
 }
