@@ -202,6 +202,36 @@ export function shouldExcludeJob(job: RawJob, criteria?: Criteria): { exclude: b
     return { exclude: true, reason: `Requires ${requiredExp} yrs experience, user max is ${expMax}` };
   }
 
+  // Exclude if no salary info, unless experience is explicitly stated and fits the user's range
+  const hasSalary = !!(job.salaryMin || job.salaryMax || job.salaryText);
+  if (!hasSalary) {
+    const expMin = criteria?.expMin ?? 1;
+    const expText = (job.experienceYears || "") + " " + (job.description || "");
+    const requiredExp = parseRequiredExpYears(expText);
+    const expExplicitlyFits = requiredExp !== undefined && requiredExp >= expMin && requiredExp <= expMax + 1;
+    if (!expExplicitlyFits) {
+      return { exclude: true, reason: "No salary listed and experience requirement not an explicit match" };
+    }
+  }
+
+  // Exclude contract/freelance/part-time postings — keep full-time only
+  const title = job.title.toLowerCase();
+  const titleAndDesc = title + " " + (job.description || "").toLowerCase();
+  const CONTRACT_KEYWORDS = ["contract", "freelance", "part-time", "part time", "temporary", "temp ", "1099", "contractor"];
+  const isContract = CONTRACT_KEYWORDS.some(kw => titleAndDesc.includes(kw));
+  if (isContract) {
+    return { exclude: true, reason: `Contract/part-time role: "${job.title}"` };
+  }
+
+  // Exclude jobs that aren't actually design roles — catches "graphics installer", "wrap technician", etc.
+  const DESIGN_ROLE_KEYWORDS = ["designer", "design director", "art director", "creative director", "brand strategist", "visual artist"];
+  const NON_DESIGN_KEYWORDS = ["install", "technician", "mechanic", "driver", "warehouse", "electrician", "plumber", "hvac", "welder", "vinyl wrap", "sign maker"];
+  const isDesignRole = DESIGN_ROLE_KEYWORDS.some(kw => title.includes(kw));
+  const isNonDesign = NON_DESIGN_KEYWORDS.some(kw => title.includes(kw));
+  if (!isDesignRole || isNonDesign) {
+    return { exclude: true, reason: `Not a design role: "${job.title}"` };
+  }
+
   return { exclude: false };
 }
 
