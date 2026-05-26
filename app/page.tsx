@@ -37,6 +37,8 @@ interface Client {
   linkedinUrl?: string;
   bio?: string;
   criteria?: JobCriteria;
+  gmailConnected?: boolean;
+  gmailSyncedAt?: string;
   createdAt: string;
 }
 
@@ -501,6 +503,9 @@ function Dashboard({ client, onBack }: { client: Client; onBack: () => void }) {
   const [fetching, setFetching] = useState(false);
   const [saveMsg, setSaveMsg] = useState("");
   const [profileData, setProfileData] = useState(client);
+  const [gmailConnected, setGmailConnected] = useState(client.gmailConnected ?? false);
+  const [gmailSyncing, setGmailSyncing] = useState(false);
+  const [gmailResult, setGmailResult] = useState<{ matched: number; emailsScanned: number } | null>(null);
   const [editingCriteria, setEditingCriteria] = useState(false);
   const [criteriaForm, setCriteriaForm] = useState<JobCriteria>(client.criteria ?? {
     salaryMin: 50000, locations: "Denver, CO", remoteOk: true, expMin: 1, expMax: 3,
@@ -528,6 +533,16 @@ function Dashboard({ client, onBack }: { client: Client; onBack: () => void }) {
   }, [client.id]);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  // Handle Gmail OAuth redirect back (?gmailConnected=1)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("gmailConnected") === "1") {
+      setGmailConnected(true);
+      setActiveTab("gmail");
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  }, []);
 
   // Keep profileData in sync when client prop changes
   useEffect(() => {
@@ -557,6 +572,17 @@ function Dashboard({ client, onBack }: { client: Client; onBack: () => void }) {
     const sources = fetchData?.sources ?? [];
     const sourceStr = sources.length ? ` (${sources.join(", ")})` : "";
     alert(`Deleted ${delData.deleted ?? 0} old jobs.\nAdded ${added} new jobs${sourceStr}.${added === 0 ? "\n\nNo real listings found — check that RAPIDAPI_KEY is set correctly in Railway." : ""}`);
+  }
+
+  async function syncGmail() {
+    setGmailSyncing(true);
+    const res = await fetch(`/api/gmail/sync?clientId=${client.id}`);
+    const data = await res.json();
+    if (res.ok) {
+      setGmailResult({ matched: data.matched, emailsScanned: data.emailsScanned });
+      await loadData();
+    }
+    setGmailSyncing(false);
   }
 
   async function markApplied(jobId: string) {
@@ -816,15 +842,60 @@ function Dashboard({ client, onBack }: { client: Client; onBack: () => void }) {
           {activeTab === "gmail" && (
             <div className="space-y-6">
               <h1 className="text-2xl font-bold text-gray-900">Gmail Application Tracker</h1>
+
+              {/* Connection status card */}
               <Card>
-                <CardHeader><h2 className="font-semibold text-gray-900 flex items-center gap-2"><Mail className="w-5 h-5 text-indigo-600" /> How It Works</h2></CardHeader>
+                <CardContent className="pt-6">
+                  {gmailConnected ? (
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="w-3 h-3 rounded-full bg-green-500" />
+                        <div>
+                          <p className="font-medium text-gray-900">Gmail Connected</p>
+                          <p className="text-sm text-gray-500">{client.gmailSyncedAt ? `Last synced ${new Date(client.gmailSyncedAt).toLocaleString()}` : "Never synced"}</p>
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        <Button onClick={syncGmail} disabled={gmailSyncing} variant="secondary" size="sm">
+                          <RefreshCw className={`w-4 h-4 ${gmailSyncing ? "animate-spin" : ""}`} />
+                          {gmailSyncing ? "Syncing…" : "Sync Now"}
+                        </Button>
+                        <Button onClick={() => window.location.href = `/api/gmail/auth?clientId=${client.id}`} variant="ghost" size="sm" className="text-gray-400 text-xs">
+                          Reconnect
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-center py-6 space-y-4">
+                      <Mail className="w-12 h-12 text-gray-300 mx-auto" />
+                      <div>
+                        <p className="font-semibold text-gray-900">Connect your Gmail</p>
+                        <p className="text-sm text-gray-500 mt-1">We&apos;ll scan your inbox for replies from companies you&apos;ve applied to and automatically update your application status.</p>
+                      </div>
+                      <Button onClick={() => window.location.href = `/api/gmail/auth?clientId=${client.id}`} className="bg-indigo-600 hover:bg-indigo-700 text-white">
+                        <Mail className="w-4 h-4" /> Connect Gmail
+                      </Button>
+                      <p className="text-xs text-gray-400">Read-only access · We never send emails on your behalf</p>
+                    </div>
+                  )}
+                  {gmailResult && (
+                    <div className="mt-4 bg-green-50 border border-green-200 rounded-lg p-3 text-sm text-green-800">
+                      Scanned {gmailResult.emailsScanned} emails · Matched {gmailResult.matched} to your applications
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* How it works */}
+              <Card>
+                <CardHeader><h2 className="font-semibold text-gray-900">How It Works</h2></CardHeader>
                 <CardContent>
                   <ol className="space-y-4 text-sm text-gray-700">
                     {[
-                      { n: 1, title: "Domain Matching", body: "When you apply to a company (e.g., ibotta.com), the tracker watches your Gmail for emails from *@ibotta.com and auto-links them to your application." },
-                      { n: 2, title: "Status Detection", body: 'Email subjects are scanned for signals: "thank you for applying" → Applied, "schedule an interview" → Interview, "not moving forward" → Rejected.' },
-                      { n: 3, title: "Follow-up Reminders", body: "When you mark a job applied, follow-ups auto-schedule at 1, 2, and 3 weeks with pre-written draft emails." },
-                      { n: 4, title: "Chrome Extension", body: "The Gmail plugin reads your inbox in the background and posts matched emails to /api/gmail/sync." },
+                      { n: 1, title: "Domain Matching", body: "When you mark a job as applied (e.g., ibotta.com), we watch your inbox for emails from *@ibotta.com." },
+                      { n: 2, title: "Status Detection", body: '"Thank you for applying" → Applied · "Schedule an interview" → Interview · "Not moving forward" → Rejected.' },
+                      { n: 3, title: "Auto-updates", body: "Your Applications tab updates automatically. Click Sync Now any time to check for new replies." },
+                      { n: 4, title: "Privacy", body: "Read-only Gmail access. We only look at sender domain + subject line. Email body content is never read or stored." },
                     ].map(s => (
                       <li key={s.n} className="flex gap-3">
                         <span className="flex-shrink-0 w-6 h-6 bg-indigo-100 text-indigo-700 rounded-full flex items-center justify-center text-xs font-bold">{s.n}</span>
@@ -834,31 +905,29 @@ function Dashboard({ client, onBack }: { client: Client; onBack: () => void }) {
                   </ol>
                 </CardContent>
               </Card>
-              <Card>
-                <CardHeader><h2 className="font-semibold text-gray-900">Setup Instructions</h2></CardHeader>
-                <CardContent>
-                  <div className="space-y-4">
-                    <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
-                      <h3 className="text-sm font-semibold text-amber-800 mb-2">Gmail API Configuration</h3>
-                      <ol className="text-sm text-amber-700 space-y-1.5 list-decimal list-inside">
-                        <li>Go to <strong>console.cloud.google.com</strong> → Create project</li>
-                        <li>Enable the <strong>Gmail API</strong></li>
-                        <li>Create OAuth 2.0 credentials → add your Railway URL as redirect URI</li>
-                        <li>Add <code className="bg-amber-100 px-1 rounded">GMAIL_CLIENT_ID</code> and <code className="bg-amber-100 px-1 rounded">GMAIL_CLIENT_SECRET</code> to Railway environment variables</li>
-                      </ol>
+
+              {/* Recent email events */}
+              {applications.filter(a => a.emailEvents?.length > 0).length > 0 && (
+                <Card>
+                  <CardHeader><h2 className="font-semibold text-gray-900">Recent Email Activity</h2></CardHeader>
+                  <CardContent>
+                    <div className="space-y-3">
+                      {applications.filter(a => a.emailEvents?.length > 0).flatMap(a =>
+                        a.emailEvents.map(ev => (
+                          <div key={ev.id} className="flex items-start gap-3 text-sm border-b border-gray-100 pb-3 last:border-0">
+                            <Mail className="w-4 h-4 text-gray-400 mt-0.5 flex-shrink-0" />
+                            <div>
+                              <p className="font-medium text-gray-900">{ev.subject || "(no subject)"}</p>
+                              <p className="text-gray-500">{ev.from} · {new Date(ev.receivedAt).toLocaleDateString()}</p>
+                              {ev.statusChange && <Badge className="mt-1 text-xs">{ev.statusChange}</Badge>}
+                            </div>
+                          </div>
+                        ))
+                      )}
                     </div>
-                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                      <h3 className="text-sm font-semibold text-blue-800 mb-2">Chrome Extension</h3>
-                      <ol className="text-sm text-blue-700 space-y-1.5 list-decimal list-inside">
-                        <li>Open Chrome → <code className="bg-blue-100 px-1 rounded">chrome://extensions</code></li>
-                        <li>Enable Developer Mode → Load unpacked → select <code className="bg-blue-100 px-1 rounded">/chrome-extension</code> folder</li>
-                        <li>Update <code className="bg-blue-100 px-1 rounded">JOBAPP_API</code> in background.js to your Railway URL</li>
-                        <li>Pin extension and sign in with Gmail</li>
-                      </ol>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
+                  </CardContent>
+                </Card>
+              )}
             </div>
           )}
 

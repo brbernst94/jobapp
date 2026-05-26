@@ -16,6 +16,9 @@ model Client {
   portfolioUrl  String?
   linkedinUrl   String?
   bio           String?
+  gmailRefreshToken String?
+  gmailConnected    Boolean @default(false)
+  gmailSyncedAt     DateTime?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
