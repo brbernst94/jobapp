@@ -24,7 +24,7 @@ async function fetchFromJSearch(query: string, location: string, salaryMin: numb
   try {
     const q = encodeURIComponent(`${query} in ${location}`);
     const res = await fetch(
-      `https://jsearch.p.rapidapi.com/search?query=${q}&num_pages=2&date_posted=month`,
+      `https://jsearch.p.rapidapi.com/search?query=${q}&num_pages=3&date_posted=month`,
       {
         headers: {
           "X-RapidAPI-Key": apiKey,
@@ -116,17 +116,24 @@ export async function fetchGraphicDesignJobs(
   locations: string[],
   salaryMin: number
 ): Promise<RawJob[]> {
-  const primaryTitle = titles[0] || "graphic designer";
   const primaryLocation = locations[0] || "Denver, CO";
-  const keywordQuery = titles.join(" ");
 
-  const [jsearch, jsearchRemote, builtin] = await Promise.all([
-    fetchFromJSearch(keywordQuery, primaryLocation, salaryMin),
-    fetchFromJSearch(`${keywordQuery} remote`, "United States", salaryMin),
-    fetchFromBuiltIn(keywordQuery),
-  ]);
+  // Run each title as its own query — different terms surface different publishers
+  // (LinkedIn results tend to appear under exact title searches)
+  const titleQueries = titles.slice(0, 4).map(t => t.trim()).filter(Boolean);
+  if (!titleQueries.length) titleQueries.push("Graphic Designer");
 
-  const results = [...jsearch, ...jsearchRemote, ...builtin];
+  const fetches = [
+    // Per-title local searches
+    ...titleQueries.map(t => fetchFromJSearch(t, primaryLocation, salaryMin)),
+    // Per-title remote searches
+    ...titleQueries.map(t => fetchFromJSearch(`${t} remote`, "United States", salaryMin)),
+    // BuiltIn Colorado
+    fetchFromBuiltIn(titleQueries[0]),
+  ];
+
+  const allResults = await Promise.all(fetches);
+  const results = allResults.flat();
 
   const seen = new Set<string>();
   return results.filter((job) => {
