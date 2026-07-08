@@ -15,7 +15,7 @@ export interface RawJob {
   companyWebsite?: string;
 }
 
-const ALLOWED_PUBLISHERS = ["linkedin", "ziprecruiter", "indeed", "builtin"];
+const ALLOWED_PUBLISHERS = ["linkedin", "ziprecruiter", "indeed", "builtin", "mediabistro", "workday"];
 
 // JSearch via RapidAPI — filters to LinkedIn, Indeed, ZipRecruiter only
 async function fetchFromJSearch(query: string, location: string, salaryMin: number): Promise<RawJob[]> {
@@ -63,7 +63,7 @@ async function fetchFromJSearch(query: string, location: string, salaryMin: numb
           isRemote: (job.job_is_remote as boolean) || false,
           salaryMin: minSal,
           salaryMax: maxSal,
-          salaryText: minSal && maxSal ? `$${(minSal / 1000).toFixed(0)}k – $${(maxSal / 1000).toFixed(0)}k/yr` : undefined,
+          salaryText: minSal && maxSal && minSal > 0 ? `$${(minSal / 1000).toFixed(0)}k – $${(maxSal / 1000).toFixed(0)}k/yr` : undefined,
           jobUrl: (job.job_apply_link || job.job_google_link) as string,
           description: job.job_description ? (job.job_description as string).slice(0, 600) : undefined,
           postedAt: job.job_posted_at_datetime_utc as string | undefined,
@@ -203,7 +203,11 @@ export function shouldExcludeJob(job: RawJob, criteria?: Criteria): { exclude: b
   }
 
   // Exclude if no salary info, unless experience is explicitly stated and fits the user's range
-  const hasSalary = !!(job.salaryMin || job.salaryMax || job.salaryText);
+  const hasSalary = !!(
+    (job.salaryMin && job.salaryMin > 0) ||
+    (job.salaryMax && job.salaryMax > 0) ||
+    job.salaryText
+  );
   if (!hasSalary) {
     const expMin = criteria?.expMin ?? 1;
     const expText = (job.experienceYears || "") + " " + (job.description || "");
