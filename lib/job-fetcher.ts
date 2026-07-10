@@ -179,19 +179,21 @@ function parseRequiredExpYears(text: string): number | undefined {
 // Checks if a job URL is still active by making a HEAD request.
 // Returns false (exclude) if the URL is 404/410/Gone or redirects to a known "job closed" pattern.
 export async function isJobUrlActive(url: string): Promise<boolean> {
-  if (!url || url.startsWith("https://www.google.com")) return true; // skip google fallback links
+  if (!url || url.startsWith("https://www.google.com")) return true;
   try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
     const res = await fetch(url, {
       method: "HEAD",
       redirect: "follow",
-      signal: AbortSignal.timeout(5000),
-    });
+      signal: controller.signal,
+    }).finally(() => clearTimeout(timer));
     if (res.status === 404 || res.status === 410 || res.status === 400) return false;
     const finalUrl = res.url.toLowerCase();
     const closedPatterns = ["jobnotfound", "job-not-found", "job_not_found", "expired", "job-closed", "jobclosed", "no-longer", "position-filled", "not-available", "unavailable"];
     if (closedPatterns.some(p => finalUrl.includes(p))) return false;
     return true;
-  } catch { return true; } // network error → assume active rather than drop
+  } catch { return true; } // timeout or network error → assume active
 }
 
 export function shouldExcludeJob(job: RawJob, criteria?: Criteria): { exclude: boolean; reason?: string } {

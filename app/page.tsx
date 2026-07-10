@@ -555,9 +555,15 @@ function Dashboard({ client, onBack }: { client: Client; onBack: () => void }) {
 
   async function fetchJobs() {
     setFetching(true);
-    await fetch(`/api/cron/fetch-jobs?clientId=${client.id}`);
+    const res = await fetch(`/api/cron/fetch-jobs?clientId=${client.id}`);
+    const data = await res.json();
     await loadData();
     setFetching(false);
+    const added = data?.results?.[client.id]?.added ?? 0;
+    const skipped = data?.results?.[client.id]?.skipped ?? 0;
+    const sources = data?.sources ?? [];
+    const sourceStr = sources.length ? ` from ${sources.join(", ")}` : "";
+    alert(`Added ${added} new job${added !== 1 ? "s" : ""}${sourceStr}.\n${skipped} duplicate${skipped !== 1 ? "s" : ""} skipped.`);
   }
 
   async function clearAndRefetch() {
