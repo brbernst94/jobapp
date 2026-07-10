@@ -24,7 +24,7 @@ async function fetchFromJSearch(query: string, location: string, salaryMin: numb
   try {
     const q = encodeURIComponent(`${query} in ${location}`);
     const res = await fetch(
-      `https://jsearch.p.rapidapi.com/search?query=${q}&num_pages=3&date_posted=month`,
+      `https://jsearch.p.rapidapi.com/search?query=${q}&num_pages=4&date_posted=month`,
       {
         headers: {
           "X-RapidAPI-Key": apiKey,
@@ -111,6 +111,35 @@ async function fetchFromBuiltIn(keywords: string): Promise<RawJob[]> {
   } catch { return []; }
 }
 
+// Indeed RSS — free, no key, real listings
+async function fetchFromIndeedRSS(keywords: string, location: string): Promise<RawJob[]> {
+  try {
+    const params = new URLSearchParams({ q: keywords, l: location, radius: "25", sort: "date" });
+    const res = await fetch(`https://www.indeed.com/rss?${params}`, {
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; JobApp/1.0)" },
+      next: { revalidate: 0 },
+    });
+    if (!res.ok) return [];
+    const xml = await res.text();
+    const items = xml.match(/<item>([\s\S]*?)<\/item>/g) || [];
+    return items.slice(0, 20).flatMap((item) => {
+      const getTag = (tag: string) =>
+        item.match(new RegExp(`<${tag}><!\\[CDATA\\[([\\s\\S]*?)\\]\\]><\\/${tag}>`))?.[1] ||
+        item.match(new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`))?.[1] || "";
+      const rawTitle = getTag("title");
+      const link = getTag("link") || item.match(/<link\s*\/?>(.*?)<\/link>/)?.[1] || "";
+      if (!rawTitle || !link) return [];
+      const parts = rawTitle.split(" - ");
+      const title = parts[0]?.trim() || rawTitle;
+      const company = parts[1]?.trim() || "Unknown";
+      const loc = parts[2]?.trim() || location;
+      const desc = getTag("description").replace(/<[^>]*>/g, "").trim().slice(0, 500);
+      const pubDate = getTag("pubDate");
+      return [{ title, company, location: loc, isRemote: loc.toLowerCase().includes("remote"), jobUrl: link, description: desc || undefined, postedAt: pubDate || undefined, source: "Indeed" }];
+    });
+  } catch { return []; }
+}
+
 export async function fetchGraphicDesignJobs(
   titles: string[],
   locations: string[],
@@ -124,10 +153,13 @@ export async function fetchGraphicDesignJobs(
   if (!titleQueries.length) titleQueries.push("Graphic Designer");
 
   const fetches = [
-    // Per-title local searches
+    // Per-title local searches via JSearch (LinkedIn, Indeed, ZipRecruiter, Mediabistro, Workday)
     ...titleQueries.map(t => fetchFromJSearch(t, primaryLocation, salaryMin)),
     // Per-title remote searches
     ...titleQueries.map(t => fetchFromJSearch(`${t} remote`, "United States", salaryMin)),
+    // Indeed RSS — free direct feed, adds volume
+    fetchFromIndeedRSS(titleQueries[0], primaryLocation),
+    fetchFromIndeedRSS(`${titleQueries[0]} remote`, ""),
     // BuiltIn Colorado
     fetchFromBuiltIn(titleQueries[0]),
   ];
@@ -229,21 +261,7 @@ export function shouldExcludeJob(job: RawJob, criteria?: Criteria): { exclude: b
     return { exclude: true, reason: `Requires ${requiredExp} yrs experience, user max is ${expMax}` };
   }
 
-  // Exclude if no salary info, unless experience is explicitly stated and fits the user's range
-  const hasSalary = !!(
-    (job.salaryMin && job.salaryMin > 0) ||
-    (job.salaryMax && job.salaryMax > 0) ||
-    job.salaryText
-  );
-  if (!hasSalary) {
-    const expMin = criteria?.expMin ?? 1;
-    const expText = (job.experienceYears || "") + " " + (job.description || "");
-    const requiredExp = parseRequiredExpYears(expText);
-    const expExplicitlyFits = requiredExp !== undefined && requiredExp >= expMin && requiredExp <= expMax + 1;
-    if (!expExplicitlyFits) {
-      return { exclude: true, reason: "No salary listed and experience requirement not an explicit match" };
-    }
-  }
+  // Note: no-salary jobs are kept but scored lower (many LinkedIn jobs never list pay)
 
   // Exclude contract/freelance/part-time postings — keep full-time only
   const title = job.title.toLowerCase();
@@ -285,10 +303,11 @@ export function scoreJob(job: RawJob, criteria?: Criteria): { score: number; pri
   const expMin = criteria?.expMin ?? 1;
   const expMax = criteria?.expMax ?? 3;
 
-  const salary = job.salaryMin || 0;
+  const salary = job.salaryMin && job.salaryMin > 0 ? job.salaryMin : 0;
   if (salary >= salaryMin + 10000) score += 30;
   else if (salary >= salaryMin) score += 20;
   else if (salary >= salaryMin * 0.9) score += 10;
+  else if (salary === 0) score -= 10; // no salary listed — still show but deprioritise
 
   const loc = job.location.toLowerCase();
   const matchesLocation = preferredLocations.some(pl => loc.includes(pl.split(",")[0].toLowerCase()));
